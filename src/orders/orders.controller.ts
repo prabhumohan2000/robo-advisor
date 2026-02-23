@@ -54,7 +54,7 @@ export class OrdersController {
     type: CreateOrderDto,
     examples: {
       buy: {
-        summary: 'Invest $100 — AAPL 60% + TSLA 40% (custom prices)',
+        summary: 'Invest $100 — AAPL 60% + TSLA 40% (mixed prices)',
         value: {
           amount: 100,
           orderType: 'BUY',
@@ -62,7 +62,6 @@ export class OrdersController {
             {
               stockId: 'a1b2c3d4-0001-4000-8000-000000000001',
               percentage: 60,
-              marketPrice: 180,
             },
             {
               stockId: 'a1b2c3d4-0002-4000-8000-000000000002',
