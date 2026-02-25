@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { addDays, format, isWeekend, setHours, setMinutes } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
+import Decimal from 'decimal.js';
 import { STOCKS } from '../stocks/stocks.constants';
 import { UsersService } from '../users/users.service';
 import { CreateOrderDto } from './dto/order.dto';
@@ -18,14 +21,30 @@ import {
 
 type Stock = { id: string; symbol: string; name: string };
 
+interface IdempotencyRecord {
+  order: Order;
+  createdAt: Date;
+  userId: string;
+  requestHash: string;
+}
+
 @Injectable()
 export class OrdersService {
   private readonly orders: Order[] = [];
   private readonly fixedPrice: number;
   private readonly shareDecimals: number;
 
-  // Map<userId, Map<symbol, netShares>>
+  private readonly US_TIMEZONE = 'America/New_York';
+  private readonly MARKET_OPEN_HOUR = 9;
+  private readonly MARKET_OPEN_MINUTE = 30;
+  private readonly MARKET_CLOSE_HOUR = 16;
+  private readonly MARKET_CLOSE_MINUTE = 0;
+
   private readonly holdings = new Map<string, Map<string, number>>();
+
+  private readonly idempotencyStore = new Map<string, IdempotencyRecord>();
+
+  private readonly IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
   constructor(
     private readonly configService: ConfigService,
@@ -64,6 +83,19 @@ export class OrdersService {
     return this.holdings.get(userId)!;
   }
 
+  private calculateRequestHash(dto: CreateOrderDto): string {
+    const payload = JSON.stringify({
+      amount: dto.amount,
+      orderType: dto.orderType,
+      portfolio: dto.portfolio.map((item) => ({
+        stockId: item.stockId,
+        percentage: item.percentage,
+        marketPrice: item.marketPrice,
+      })),
+    });
+    return createHash('sha256').update(payload).digest('hex');
+  }
+
   private getHeldShares(userId: string, symbol: string): number {
     return this.getUserHoldings(userId).get(symbol) ?? 0;
   }
@@ -75,26 +107,56 @@ export class OrdersService {
   ): void {
     const userHoldings = this.getUserHoldings(userId);
     for (const item of items) {
-      const current = userHoldings.get(item.symbol) ?? 0;
+      const current = new Decimal(userHoldings.get(item.symbol) ?? 0);
       const updated =
         orderType === OrderType.BUY
-          ? current + item.shares
-          : current - item.shares;
+          ? current.plus(item.shares)
+          : current.minus(item.shares);
       userHoldings.set(
         item.symbol,
-        parseFloat(updated.toFixed(this.shareDecimals)),
+        Math.round(updated.toNumber() * Math.pow(10, this.shareDecimals)) /
+          Math.pow(10, this.shareDecimals),
       );
     }
   }
 
-  create(dto: CreateOrderDto, userId: string): Order {
+  create(dto: CreateOrderDto, userId: string, idempotencyKey?: string): Order {
+    if (idempotencyKey) {
+      const requestHash = this.calculateRequestHash(dto);
+      const existingRecord = this.idempotencyStore.get(idempotencyKey);
+
+      if (existingRecord) {
+        if (existingRecord.userId !== userId) {
+          throw new BadRequestException(
+            'Idempotency key already used by another user',
+          );
+        }
+
+        if (existingRecord.requestHash !== requestHash) {
+          throw new BadRequestException(
+            'Idempotency key used with different request payload',
+          );
+        }
+
+        const now = new Date();
+        const ageMs = now.getTime() - existingRecord.createdAt.getTime();
+
+        if (ageMs < this.IDEMPOTENCY_TTL_MS) {
+          return existingRecord.order;
+        } else {
+          this.idempotencyStore.delete(idempotencyKey);
+        }
+      }
+    }
+
     const totalPercentage = dto.portfolio.reduce(
-      (sum, item) => sum + item.percentage,
-      0,
+      (sum, item) => sum.plus(item.percentage),
+      new Decimal(0),
     );
-    if (totalPercentage !== 100) {
+
+    if (!totalPercentage.equals(100) && totalPercentage.minus(100).abs().greaterThan(0.01)) {
       throw new BadRequestException(
-        `Portfolio percentages must sum to 100, got ${totalPercentage}`,
+        `Portfolio percentages must sum to 100, got ${totalPercentage.toFixed(2)}`,
       );
     }
 
@@ -108,15 +170,16 @@ export class OrdersService {
           `marketPrice for ${stock.symbol} must be at least $${this.fixedPrice}, got $${item.marketPrice}`,
         );
       }
-      const price = item.marketPrice ?? this.fixedPrice;
-      const allocatedAmount = dto.amount * (item.percentage / 100);
-      const shares = parseFloat(
-        (allocatedAmount / price).toFixed(this.shareDecimals),
-      );
+      const price = new Decimal(item.marketPrice ?? this.fixedPrice);
+      const allocatedAmount = new Decimal(dto.amount)
+        .times(item.percentage)
+        .dividedBy(100);
+      const shares = allocatedAmount.dividedBy(price);
+
       return {
         symbol: this.findStock(item.stockId).symbol,
-        amount: allocatedAmount,
-        shares,
+        amount: Math.round(allocatedAmount.toNumber() * 100) / 100,
+        shares: Math.round(shares.toNumber() * Math.pow(10, this.shareDecimals)) / Math.pow(10, this.shareDecimals),
       };
     });
 
@@ -145,7 +208,7 @@ export class OrdersService {
       id: randomUUID(),
       userId,
       orderType: dto.orderType,
-      totalAmount: dto.amount,
+      totalAmount: Math.round(dto.amount * 100) / 100,
       items,
       executeOn,
       status,
@@ -161,6 +224,16 @@ export class OrdersService {
       this.usersService.addBalance(userId, dto.amount);
     }
 
+    if (idempotencyKey) {
+      const requestHash = this.calculateRequestHash(dto);
+      this.idempotencyStore.set(idempotencyKey, {
+        order,
+        createdAt: new Date(),
+        userId,
+        requestHash,
+      });
+    }
+
     return order;
   }
 
@@ -168,30 +241,22 @@ export class OrdersService {
     const userOrders = this.orders.filter((o) => o.userId === userId);
     const stockMap = new Map<
       string,
-      { shares: number; totalInvested: number; totalSold: number }
+      { shares: any; totalInvested: any; totalSold: any }
     >();
 
     for (const order of userOrders) {
       for (const item of order.items) {
         const existing = stockMap.get(item.symbol) ?? {
-          shares: 0,
-          totalInvested: 0,
-          totalSold: 0,
+          shares: new Decimal(0),
+          totalInvested: new Decimal(0),
+          totalSold: new Decimal(0),
         };
         if (order.orderType === OrderType.BUY) {
-          existing.shares = parseFloat(
-            (existing.shares + item.shares).toFixed(this.shareDecimals),
-          );
-          existing.totalInvested = parseFloat(
-            (existing.totalInvested + item.amount).toFixed(2),
-          );
+          existing.shares = existing.shares.plus(item.shares);
+          existing.totalInvested = existing.totalInvested.plus(item.amount);
         } else {
-          existing.shares = parseFloat(
-            (existing.shares - item.shares).toFixed(this.shareDecimals),
-          );
-          existing.totalSold = parseFloat(
-            (existing.totalSold + item.amount).toFixed(2),
-          );
+          existing.shares = existing.shares.minus(item.shares);
+          existing.totalSold = existing.totalSold.plus(item.amount);
         }
         stockMap.set(item.symbol, existing);
       }
@@ -200,45 +265,94 @@ export class OrdersService {
     const holdings: StockHolding[] = Array.from(stockMap.entries()).map(
       ([symbol, data]) => ({
         symbol,
-        shares: data.shares,
-        totalInvested: data.totalInvested,
-        totalSold: data.totalSold,
-        netAmount: parseFloat((data.totalInvested - data.totalSold).toFixed(2)),
+        shares:
+          Math.round(data.shares.toNumber() * Math.pow(10, this.shareDecimals)) /
+          Math.pow(10, this.shareDecimals),
+        totalInvested: Math.round(data.totalInvested.toNumber() * 100) / 100,
+        totalSold: Math.round(data.totalSold.toNumber() * 100) / 100,
+        netAmount:
+          Math.round(data.totalInvested.minus(data.totalSold).toNumber() * 100) /
+          100,
       }),
     );
 
-    const totalInvested = parseFloat(
-      holdings.reduce((sum, h) => sum + h.totalInvested, 0).toFixed(2),
-    );
-    const totalSold = parseFloat(
-      holdings.reduce((sum, h) => sum + h.totalSold, 0).toFixed(2),
-    );
+    const totalInvested =
+      Math.round(
+        holdings
+          .reduce((sum, h) => sum.plus(h.totalInvested), new Decimal(0))
+          .toNumber() * 100,
+      ) / 100;
+    const totalSold =
+      Math.round(
+        holdings
+          .reduce((sum, h) => sum.plus(h.totalSold), new Decimal(0))
+          .toNumber() * 100,
+      ) / 100;
 
     return {
       holdings,
       totalInvested,
       totalSold,
-      netAmount: parseFloat((totalInvested - totalSold).toFixed(2)),
+      netAmount: Math.round((totalInvested - totalSold) * 100) / 100,
     };
   }
 
   getExecutionDay(): { executeOn: string; status: OrderStatus } {
-    const today = new Date();
-    const dayOfWeek = today.getUTCDay();
+    const now = new Date();
+    const estNow = toZonedTime(now, this.US_TIMEZONE);
 
-    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
-    if (isWeekday) {
+    if (isWeekend(estNow)) {
+      const nextTradingDay = this.getNextTradingDay(estNow);
       return {
-        executeOn: today.toISOString().split('T')[0],
-        status: OrderStatus.SCHEDULED,
+        executeOn: format(nextTradingDay, 'yyyy-MM-dd'),
+        status: OrderStatus.PENDING,
       };
     }
-    const daysUntilMonday = dayOfWeek === 6 ? 2 : 1;
-    const nextMonday = new Date(today);
-    nextMonday.setUTCDate(today.getUTCDate() + daysUntilMonday);
-    return {
-      executeOn: nextMonday.toISOString().split('T')[0],
-      status: OrderStatus.PENDING,
-    };
+
+    const marketOpen = setMinutes(
+      setHours(estNow, this.MARKET_OPEN_HOUR),
+      this.MARKET_OPEN_MINUTE,
+    );
+    const marketClose = setMinutes(
+      setHours(estNow, this.MARKET_CLOSE_HOUR),
+      this.MARKET_CLOSE_MINUTE,
+    );
+
+    if (estNow >= marketOpen && estNow < marketClose) {
+      return {
+        executeOn: format(estNow, 'yyyy-MM-dd'),
+        status: OrderStatus.SCHEDULED,
+      };
+    } else {
+      const nextTradingDay = this.getNextTradingDay(estNow);
+      return {
+        executeOn: format(nextTradingDay, 'yyyy-MM-dd'),
+        status: OrderStatus.PENDING,
+      };
+    }
   }
+
+  private getNextTradingDay(date: Date): Date {
+    let nextDay = addDays(date, 1);
+    while (isWeekend(nextDay)) {
+      nextDay = addDays(nextDay, 1);
+    }
+    return nextDay;
+  }
+
+  cleanupExpiredIdempotencyKeys(): number {
+    const now = new Date();
+    let removedCount = 0;
+
+    for (const [key, record] of this.idempotencyStore.entries()) {
+      const ageMs = now.getTime() - record.createdAt.getTime();
+      if (ageMs >= this.IDEMPOTENCY_TTL_MS) {
+        this.idempotencyStore.delete(key);
+        removedCount++;
+      }
+    }
+
+    return removedCount;
+  }
+
 }

@@ -8,12 +8,14 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { AuthMiddleware } from './common/middlewares/auth.middleware';
 import { LoggerMiddleware } from './common/middlewares/logger.middleware';
+import { HealthModule } from './health/health.module';
 import { OrdersModule } from './orders/orders.module';
 import { StocksModule } from './stocks/stocks.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    HealthModule,
     AuthModule,
     OrdersModule,
     StocksModule,

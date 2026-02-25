@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -49,6 +50,9 @@ export class OrdersController {
   @Post()
   @ApiOperation({
     summary: 'Split an investment amount across a model portfolio',
+    description: `Split investment across multiple stocks with optional idempotency support.
+                  Use \`Idempotency-Key\` header to prevent duplicate orders (24h TTL).
+                  Same key + same payload = cached response. Different payload = 400 error.`,
   })
   @ApiBody({
     type: CreateOrderDto,
@@ -103,16 +107,17 @@ export class OrdersController {
       },
     },
   })
-  @ApiResponse({ status: 201, description: 'Order created' })
+  @ApiResponse({ status: 201, description: 'Order created successfully' })
   @ApiResponse({
     status: 400,
-    description: 'Validation error or insufficient shares',
+    description: 'Validation error, insufficient balance/shares, or idempotency conflict',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   createOrder(
     @Req() req: Request,
     @Body() createOrderDto: CreateOrderDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ): Order {
-    return this.ordersService.create(createOrderDto, req.user!.sub);
+    return this.ordersService.create(createOrderDto, req.user!.sub, idempotencyKey);
   }
 }

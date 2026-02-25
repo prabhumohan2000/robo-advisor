@@ -108,7 +108,7 @@ describe('OrdersService', () => {
       };
       expect(() => service.create(dto, USER_ID)).toThrow(
         new BadRequestException(
-          'Portfolio percentages must sum to 100, got 60',
+          'Portfolio percentages must sum to 100, got 60.00',
         ),
       );
     });
@@ -177,9 +177,8 @@ describe('OrdersService', () => {
     });
 
     it('should throw BadRequestException when selling more shares than held', () => {
-      service.create(buyDto, USER_ID); // BUY → 6 AAPL shares
+      service.create(buyDto, USER_ID);
 
-      // Try to sell $2000 worth of AAPL = 20 shares, but only 6 held
       const sellDto = {
         amount: 2000,
         orderType: OrderType.SELL,
@@ -236,25 +235,119 @@ describe('OrdersService', () => {
   });
 
   describe('getExecutionDay', () => {
-    it('should return SCHEDULED on a weekday (Monday)', () => {
-      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T10:00:00Z'));
+    it('should return SCHEDULED during US market hours (EST)', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T15:00:00Z'));
       const result = service.getExecutionDay();
       expect(result.status).toBe(OrderStatus.SCHEDULED);
       expect(result.executeOn).toBe('2024-01-15');
     });
 
+    it('should return PENDING before market opens (before 9:30 AM EST)', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T13:00:00Z'));
+      const result = service.getExecutionDay();
+      expect(result.status).toBe(OrderStatus.PENDING);
+      expect(result.executeOn).toBe('2024-01-16');
+    });
+
+    it('should return PENDING after market closes (after 4:00 PM EST)', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T22:00:00Z'));
+      const result = service.getExecutionDay();
+      expect(result.status).toBe(OrderStatus.PENDING);
+      expect(result.executeOn).toBe('2024-01-16');
+    });
+
     it('should return PENDING with next Monday on Saturday', () => {
-      jest.useFakeTimers().setSystemTime(new Date('2024-01-13T10:00:00Z'));
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-13T15:00:00Z'));
       const result = service.getExecutionDay();
       expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-15');
     });
 
     it('should return PENDING with next Monday on Sunday', () => {
-      jest.useFakeTimers().setSystemTime(new Date('2024-01-14T10:00:00Z'));
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-14T15:00:00Z'));
       const result = service.getExecutionDay();
       expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-15');
+    });
+
+    it('should handle market close boundary (exactly 4:00 PM EST)', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T21:00:00Z'));
+      const result = service.getExecutionDay();
+      expect(result.status).toBe(OrderStatus.PENDING);
+      expect(result.executeOn).toBe('2024-01-16');
+    });
+
+    it('should handle market open boundary (exactly 9:30 AM EST)', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2024-01-15T14:30:00Z'));
+      const result = service.getExecutionDay();
+      expect(result.status).toBe(OrderStatus.SCHEDULED);
+      expect(result.executeOn).toBe('2024-01-15');
+    });
+  });
+
+  describe('Decimal precision and edge cases', () => {
+    it('should handle percentage calculations with precision', () => {
+      const dto = {
+        amount: 1000.33,
+        orderType: OrderType.BUY,
+        portfolio: [
+          { stockId: AAPL_ID, percentage: 33.33 },
+          { stockId: TSLA_ID, percentage: 66.67 },
+        ],
+      };
+      const order = service.create(dto, USER_ID);
+
+      expect(order.totalAmount).toBe(1000.33);
+      const aapl = order.items.find((i) => i.symbol === 'AAPL')!;
+      const tsla = order.items.find((i) => i.symbol === 'TSLA')!;
+
+      expect(aapl.amount).toBeCloseTo(333.41, 2);
+      expect(tsla.amount).toBeCloseTo(666.92, 2);
+    });
+
+    it('should allow percentages with small floating-point tolerance', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [
+          { stockId: AAPL_ID, percentage: 33.33 },
+          { stockId: TSLA_ID, percentage: 66.67 },
+        ],
+      };
+      expect(() => service.create(dto, USER_ID)).not.toThrow();
+    });
+
+    it('should reject percentages that exceed tolerance', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [
+          { stockId: AAPL_ID, percentage: 33 },
+          { stockId: TSLA_ID, percentage: 66 },
+        ],
+      };
+      expect(() => service.create(dto, USER_ID)).toThrow(BadRequestException);
+    });
+
+    it('should handle very small amounts with precision', () => {
+      const dto = {
+        amount: 0.01,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 150 }],
+      };
+      const order = service.create(dto, USER_ID);
+      expect(order.totalAmount).toBe(0.01);
+      expect(order.items[0].shares).toBe(0);
+    });
+
+    it('should handle share calculations with precision', () => {
+      const dto = {
+        amount: 100,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 137.5 }],
+      };
+      const order = service.create(dto, USER_ID);
+      expect(order.items[0].shares).toBe(0.727);
     });
   });
 
@@ -302,6 +395,105 @@ describe('OrdersService', () => {
       expect(aapl.shares).toBe(5);
       expect(summary.totalSold).toBe(500);
       expect(summary.netAmount).toBe(500);
+    });
+  });
+
+  describe('Idempotency', () => {
+    const idempotencyKey = '123e4567-e89b-12d3-a456-426614174000';
+
+    it('should create order on first request with idempotency key', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const order = service.create(dto, USER_ID, idempotencyKey);
+
+      expect(order).toBeDefined();
+      expect(order.id).toBeDefined();
+      expect(order.totalAmount).toBe(1000);
+    });
+
+    it('should return cached order on duplicate request with same key and payload', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const order1 = service.create(dto, USER_ID, idempotencyKey);
+      const order2 = service.create(dto, USER_ID, idempotencyKey);
+
+      expect(order2.id).toBe(order1.id);
+      expect(order2).toEqual(order1);
+    });
+
+    it('should throw error when same key used by different user', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(dto, USER_ID, idempotencyKey);
+
+      expect(() => service.create(dto, 'different-user', idempotencyKey)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw error when same key used with different payload', () => {
+      const dto1 = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const dto2 = {
+        amount: 2000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(dto1, USER_ID, idempotencyKey);
+
+      expect(() => service.create(dto2, USER_ID, idempotencyKey)).toThrow(
+        new BadRequestException(
+          'Idempotency key used with different request payload',
+        ),
+      );
+    });
+
+    it('should create new order without idempotency key', () => {
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const order1 = service.create(dto, USER_ID);
+      const order2 = service.create(dto, USER_ID);
+
+      expect(order1.id).not.toBe(order2.id);
+    });
+
+    it('should cleanup expired idempotency keys', () => {
+      jest.useFakeTimers();
+      const dto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(dto, USER_ID, 'expired-key');
+
+      jest.advanceTimersByTime(25 * 60 * 60 * 1000);
+
+      const removed = service.cleanupExpiredIdempotencyKeys();
+      expect(removed).toBe(1);
+
+      jest.useRealTimers();
     });
   });
 });

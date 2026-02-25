@@ -15,8 +15,8 @@ export class UsersService {
   private readonly initialBalance: number;
 
   constructor(private readonly configService: ConfigService) {
-    this.initialBalance =
-      this.configService.get<number>('INITIAL_BALANCE') ?? 10000;
+    const balance = this.configService.get<string>('INITIAL_BALANCE');
+    this.initialBalance = balance ? Number(balance) : 10000;
   }
 
   async create(email: string, password: string): Promise<User> {
