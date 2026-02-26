@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsEnum,
   IsNumber,
@@ -11,17 +12,14 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { OrderType } from '../enums/order.enums';
-import {
-  IsMinArrayLength,
-  IsNoDuplicateStocks,
-} from '../validators/portfolio.validator';
+import { IsNoDuplicateStocks } from '../validators/portfolio.validator';
 
 export class PortfolioItemDto {
   @ApiProperty({
     description: 'Stock UUID',
     example: 'a1b2c3d4-0001-4000-8000-000000000001',
   })
-  @IsUUID('all', { message: 'stockId must be a valid UUID' })
+  @IsUUID('all', { message: 'Stock ID must be a valid UUID' })
   stockId: string;
 
   @ApiProperty({
@@ -30,9 +28,9 @@ export class PortfolioItemDto {
     minimum: 0,
     maximum: 100,
   })
-  @IsNumber({}, { message: 'percentage must be a number' })
-  @Min(0, { message: 'percentage must be at least 0' })
-  @Max(100, { message: 'percentage must be between 0 and 100' })
+  @IsNumber({}, { message: 'Percentage must be a valid number' })
+  @Min(0, { message: 'Percentage cannot be negative (minimum: 0)' })
+  @Max(100, { message: 'Percentage cannot exceed 100' })
   percentage: number;
 
   @ApiProperty({
@@ -42,8 +40,8 @@ export class PortfolioItemDto {
     minimum: 0.01,
   })
   @IsOptional()
-  @IsNumber({}, { message: 'marketPrice must be a number' })
-  @Min(0.01, { message: 'marketPrice must be greater than 0' })
+  @IsNumber({}, { message: 'Market price must be a valid number' })
+  @Min(0.01, { message: 'Market price must be at least $0.01' })
   marketPrice?: number;
 }
 
@@ -53,8 +51,8 @@ export class CreateOrderDto {
     example: 100,
     minimum: 0.01,
   })
-  @IsNumber({}, { message: 'amount must be a number' })
-  @Min(0.01, { message: 'amount must be greater than 0' })
+  @IsNumber({}, { message: 'Amount must be a valid number' })
+  @Min(0.01, { message: 'Amount must be at least $0.01' })
   amount: number;
 
   @ApiProperty({
@@ -62,7 +60,7 @@ export class CreateOrderDto {
     enum: OrderType,
     example: OrderType.BUY,
   })
-  @IsEnum(OrderType, { message: 'orderType must be BUY or SELL' })
+  @IsEnum(OrderType, { message: 'Order type must be either BUY or SELL' })
   orderType: OrderType;
 
   @ApiProperty({
@@ -82,10 +80,10 @@ export class CreateOrderDto {
       },
     ],
   })
-  @IsArray({ message: 'portfolio must be an array' })
-  @IsMinArrayLength(1, { message: 'portfolio must contain at least one stock' })
+  @IsArray({ message: 'Portfolio must be an array' })
+  @ArrayMinSize(1, { message: 'Portfolio must contain at least one stock' })
   @IsNoDuplicateStocks({
-    message: 'portfolio cannot contain duplicate stocks',
+    message: 'Portfolio cannot contain duplicate stocks',
   })
   @ValidateNested({ each: true })
   @Type(() => PortfolioItemDto)
