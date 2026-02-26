@@ -8,7 +8,7 @@ import {
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, SignupDto } from './dto/auth.dto';
+import { LoginDto, SignupDto, TokenResponseDto } from './dto/auth.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -26,10 +26,14 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 201, description: 'User created, returns JWT token' })
+  @ApiResponse({
+    status: 201,
+    description: 'User created, returns JWT token with metadata',
+    type: TokenResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 409, description: 'Email already registered' })
-  async signup(@Body() dto: SignupDto): Promise<{ accessToken: string }> {
+  async signup(@Body() dto: SignupDto): Promise<TokenResponseDto> {
     return this.authService.signup(dto.email, dto.password);
   }
 
@@ -45,9 +49,13 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Returns JWT token' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns JWT token with metadata',
+    type: TokenResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(@Body() dto: LoginDto): Promise<{ accessToken: string }> {
+  async login(@Body() dto: LoginDto): Promise<TokenResponseDto> {
     return this.authService.login(dto.email, dto.password);
   }
 
