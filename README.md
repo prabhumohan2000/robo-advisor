@@ -20,6 +20,7 @@ JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
 JWT_EXPIRES_IN=6h
 FIXED_PRICE=100
 SHARE_DECIMALS=3
+INITIAL_BALANCE=10000
 ```
 
 **Environment Variables:**
@@ -31,6 +32,7 @@ SHARE_DECIMALS=3
 | `JWT_EXPIRES_IN` | 6h | Token expiration |
 | `FIXED_PRICE` | 100 | Default stock price ($) |
 | `SHARE_DECIMALS` | 3 | Share quantity precision |
+| `INITIAL_BALANCE` | 10000 | Initial user balance ($) |
 
 ### 3. Run
 ```bash
