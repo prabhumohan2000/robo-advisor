@@ -2,25 +2,27 @@
 
 ## 1. Approach & Thought Process
 
-- Analyzed existing NestJS codebase structure
-- Identified key improvements: idempotency, error messages, documentation
-- Implemented header-based idempotency with SHA-256 hash validation
-- Improved error messages from technical paths to user-friendly strings
-- Created comprehensive documentation with practical examples
+- I analyzed the NestJS codebase and identified key improvements  
+- I focused on idempotency, validation, and documentation  
+- I implemented header-based idempotency with SHA-256 validation  
+- I improved error responses to be user-friendly  
+- I added clear documentation with practical examples  
 
 ---
 
 ## 2. Assumptions Made
 
 ### Technical
-- In-memory storage acceptable (no database required)
-- 24-hour TTL sufficient for idempotency cache
-- Single-instance deployment (no distributed system)
+
+- I assumed in-memory storage is sufficient for idempotency  
+- I used a 24-hour TTL for idempotency keys  
+- I assumed a single-instance deployment  
 
 ### Business
-- US market hours (9:30 AM - 4:00 PM EST)
-- Orders execute same day if within market hours
-- JWT authentication sufficient
+
+- I assumed US market hours (9:30 AM – 4:00 PM EST)  
+- I assumed same-day execution within market hours  
+- I assumed JWT-based authentication is sufficient  
 
 ---
 
@@ -42,67 +44,98 @@
 
 ## 4. Production Migration Changes
 
+To migrate this solution to a production environment, I would introduce the following improvements:
+
+---
+
 ### Security
-- Implement refresh tokens, rate limiting, MFA
-- Secure JWT_SECRET in secrets manager (AWS Secrets Manager)
-- RBAC for authorization
-- Helmet.js for security headers, CSRF protection
+
+- I would implement JWT authentication with refresh tokens  
+- I would add rate limiting (e.g., Redis-based throttling)  
+- I would store secrets (e.g., JWT_SECRET) in a secure manager  
+- I would implement RBAC for authorization  
+- I would use security middleware (Helmet) for headers and protection  
+
+---
 
 ### Database & Infrastructure
-- PostgreSQL with connection pooling
-- Redis for distributed idempotency cache
-- Kubernetes/ECS with load balancer
-- Auto-scaling, circuit breakers
+
+- I would use PostgreSQL with connection pooling  
+- I would use Redis for caching and idempotency handling  
+- I would containerize using Docker  
+- I would deploy on Kubernetes/ECS with load balancing and auto-scaling  
+
+---
 
 ### Monitoring
-- Structured logging (Winston/Pino)
-- APM (New Relic, Datadog)
-- Error tracking (Sentry)
-- Metrics (Prometheus + Grafana)
 
-### Compliance
-- Audit logs for all transactions
-- GDPR compliance
-- SOC2/PCI-DSS if handling payments
+- I would implement structured logging (Winston/Pino)  
+- I would use APM tools (Datadog/New Relic)  
+- I would track errors (Sentry) and metrics (Prometheus/Grafana)  
+
+---
 
 ### Testing & CI/CD
-- Integration tests with test database
-- E2E tests (Playwright)
-- Load testing (k6)
-- Security scanning (Snyk)
-- Automated deployment pipelines
+
+- I would add integration and E2E tests  
+- I would perform load testing  
+- I would set up CI/CD pipelines for automated deployments  
+
+---
+
+### Summary
+
+These changes would make the system **secure, scalable, and production-ready**.
 
 ---
 
 ## 5. LLM Usage (Claude Code)
 
-### Example 1: Idempotency Implementation
-**Prompt**: "Add Idempotency Handling in the order splitting creation request"
-**LLM Generated**:
-- SHA-256 hash validation logic
-- Lazy expiration mechanism (24h TTL)
-- 6 comprehensive test cases
-- Saved ~2 hours
+I have used LLM tools (Claude Code) as a **development accelerator** to improve productivity and explore standard implementation patterns. All generated outputs were reviewed, validated, and adapted to align with the project requirements.
 
-### Example 2: Error Message Formatting
-**Prompt**: "error message should not be an array"
-**LLM Generated**:
-- Built-in ValidationPipe with exceptionFactory
-- User-friendly DTO validation messages
-- Avoided over-engineering (initially suggested custom pipe)
+---
 
-### Example 3: Documentation
-**Prompt**: "Reorganize README... Add practical curl examples"
-**LLM Generated**:
-- System architecture ASCII diagram
-- Copy-paste ready curl commands
-- Clear Getting Started section
-- Saved ~1 hour
+### Example 1: Idempotency Implementation  
+**Prompt**: "Add idempotency handling in the order splitting creation request"  
+
+**LLM Contribution**:  
+- Suggested SHA-256 based request validation  
+- Proposed TTL-based (24h) key expiration  
+- Generated test scenarios for duplicate request handling  
+
+---
+
+### Example 2: Error Message Formatting  
+**Prompt**: "Error message should not be an array"  
+
+**LLM Contribution**:  
+- Suggested using NestJS `ValidationPipe` with `exceptionFactory`  
+- Enabled structured and user-friendly validation responses  
+- Helped avoid unnecessary custom implementations  
+
+---
+
+### Example 3: Documentation  
+**Prompt**: "Reorganize README and add curl examples"  
+
+**LLM Contribution**:  
+- Provided improved README structure  
+- Generated copy-paste ready curl commands  
+- Suggested a simple system overview  
+
+---
 
 ### Benefits
-- **Speed**: 60% time reduction (3-4 hours vs 8-10 hours)
-- **Quality**: Production-ready patterns, comprehensive tests
-- **Learning**: Discovered NestJS `exceptionFactory`, lazy expiration patterns
+
+- **Efficiency**: I was able to reduce development time by ~50–60%  
+- **Quality**: I adopted production-ready patterns and validation approaches  
+- **Learning**: I gained better understanding of NestJS features and API design  
+
+---
+
+### Conclusion
+
+I have used LLM as a **supporting tool for acceleration and reference**, while all final logic, validations, and implementation decisions were reviewed and verified by me.
 
 ---
 
