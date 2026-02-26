@@ -8,7 +8,7 @@ Portfolio order splitting API for managed investments.
 
 ### 1. Install
 ```bash
-npm install
+yarn install
 ```
 
 ### 2. Configure Environment
@@ -35,11 +35,11 @@ SHARE_DECIMALS=3
 ### 3. Run
 ```bash
 # Development
-npm run start:dev
+yarn start:dev
 
 # Production
-npm run build
-npm run start:prod
+yarn build
+yarn start:prod
 ```
 
 Server: `http://localhost:3000`
@@ -47,10 +47,10 @@ Server: `http://localhost:3000`
 ### 4. Test
 ```bash
 # Run tests
-npm test
+yarn test
 
 # With coverage
-npm test -- --coverage
+yarn test --coverage
 ```
 
 **Coverage:** 34 tests | Orders: 99% coverage
