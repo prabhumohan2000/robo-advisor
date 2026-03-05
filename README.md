@@ -2,6 +2,8 @@
 
 Portfolio order splitting API for managed investments.
 
+A NestJS-based service that allocates investments across multiple stocks according to portfolio weights, supporting buy/sell operations with built-in idempotency and market-hours checks.
+
 ---
 
 ## Getting Started
@@ -12,7 +14,17 @@ yarn install
 ```
 
 ### 2. Configure Environment
-Create a `.env` file in the project root:
+Copy the sample environment file and configure:
+
+```bash
+# Windows
+copy .env.sample .env
+
+# macOS/Linux
+cp .env.sample .env
+```
+
+Edit `.env` with your configuration:
 
 ```env
 PORT=3000
