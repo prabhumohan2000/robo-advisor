@@ -40,11 +40,9 @@ INITIAL_BALANCE=10000
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 3000 | Server port |
-| `JWT_SECRET` | (required) | JWT signing key |
-| `JWT_EXPIRES_IN` | 6h | Token expiration |
 | `FIXED_PRICE` | 100 | Default stock price ($) |
 | `SHARE_DECIMALS` | 3 | Share quantity precision |
-| `INITIAL_BALANCE` | 10000 | Initial user balance ($) |
+| `INITIAL_BALANCE` | 10000 | Initial platform balance ($) |
 
 ### 3. Run
 ```bash
@@ -67,7 +65,7 @@ yarn test
 yarn test --coverage
 ```
 
-**Coverage:** 34 tests | Orders: 99% coverage
+**Coverage:** 37 tests | Orders Service: 98% coverage
 
 ### 5. API Documentation
 Swagger UI: `http://localhost:3000/api`
@@ -85,30 +83,30 @@ Swagger UI: `http://localhost:3000/api`
 ┌─────────────────────────────────────┐
 │         NestJS Application          │
 ├─────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────────┐   │
-│  │   Auth   │  │   Orders     │   │
-│  │ Module   │  │   Module     │   │
-│  └────┬─────┘  └──────┬───────┘   │
-│       │                │            │
-│  ┌────▼────────────────▼───────┐   │
-│  │      Users Service          │   │
-│  └─────────────────────────────┘   │
+│  ┌──────────────┐  ┌─────────────┐ │
+│  │   Orders     │  │   Stocks    │ │
+│  │   Module     │  │   Module    │ │
+│  └──────┬───────┘  └──────┬──────┘ │
+│         │                 │         │
+│  ┌──────▼─────────────────▼──────┐ │
+│  │    Orders Service             │ │
+│  └───────────────────────────────┘ │
 │                                     │
 │  ┌─────────────────────────────┐   │
 │  │   In-Memory Storage         │   │
-│  │  • Users                    │   │
 │  │  • Orders                   │   │
 │  │  • Holdings                 │   │
+│  │  • Platform Balance         │   │
 │  │  • Idempotency Cache (24h)  │   │
 │  └─────────────────────────────┘   │
 └─────────────────────────────────────┘
 ```
 
 **Key Features:**
-- JWT authentication
-- Portfolio order splitting
-- Idempotency with SHA-256 hash validation
-- Market hours scheduling (US EST)
+- Portfolio order splitting with percentage allocation
+- Idempotency with SHA-256 hash validation (24h TTL)
+- Market hours scheduling (US EST 9:30 AM - 4:00 PM)
+- Smart order status (pending/scheduled/queued)
 - In-memory storage
 
 ---
@@ -116,34 +114,46 @@ Swagger UI: `http://localhost:3000/api`
 ## API Quick Reference
 
 ### Authentication
+
+**Note:** This API currently does not implement authentication. All endpoints are publicly accessible for development and testing purposes.
+
+### Portfolio & Balance
+
+The platform uses a **single unified balance pool** that is managed through trading operations.
+
 ```bash
-# Signup
-curl -X POST http://localhost:3000/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
+# Get Holdings & Portfolio Summary
+curl http://localhost:3000/orders/holdings
 
 # Response
+```json
 {
-  "accessToken": "eyJhbGc...",
-  "token_type": "Bearer",
-  "expires_in": 21600
+  "platformBalance": 99000,
+  "holdings": [
+    {
+      "symbol": "AAPL",
+      "shares": 6
+    },
+    {
+      "symbol": "TSLA",
+      "shares": 4
+    }
+  ],
+  "totalInvested": 1000
 }
-
-# Login
-curl -X POST http://localhost:3000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-
-# Get Profile
-curl http://localhost:3000/auth/me \
-  -H "Authorization: Bearer YOUR_TOKEN"
 ```
+```
+
+**How Balance Works:**
+- Platform starts with initial balance (configured via `INITIAL_BALANCE` in `.env`, default: $10,000)
+- **BUY orders**: Reduce platform balance, increase holdings
+- **SELL orders**: Increase platform balance, decrease holdings
+- `totalInvested` shows net amount invested (total BUY - total SELL)
 
 ### Orders
 ```bash
 # Create Order (BUY)
 curl -X POST http://localhost:3000/orders \
-  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000" \
   -d '{
@@ -162,19 +172,71 @@ curl -X POST http://localhost:3000/orders \
     ]
   }'
 
-# List Orders
-curl http://localhost:3000/orders \
-  -H "Authorization: Bearer YOUR_TOKEN"
+# Response
+```json
+{
+  "id": "e89b-12d3...",
+  "userId": "user-uuid...",
+  "orderType": "BUY",
+  "totalAmount": 1000,
+  "items": [
+    {
+      "symbol": "AAPL",
+      "amount": 600,
+      "shares": 4
+    },
+    {
+      "symbol": "TSLA",
+      "amount": 400,
+      "shares": 4
+    }
+  ],
+  "executeOn": "2024-03-06",
+  "status": "SCHEDULED",
+  "createdAt": "2024-03-06T10:00:00.000Z"
+}
+```
 
-# Get Holdings
-curl http://localhost:3000/orders/holdings \
-  -H "Authorization: Bearer YOUR_TOKEN"
+# List Orders
+curl http://localhost:3000/orders
+
+# Response
+```json
+[
+  {
+    "id": "e89b-12d3...",
+    "userId": "user-uuid...",
+    "orderType": "BUY",
+    "totalAmount": 1000,
+    "items": [...],
+    "executeOn": "2024-03-06",
+    "status": "SCHEDULED",
+    "createdAt": "2024-03-06T10:00:00.000Z"
+  }
+]
+```
 ```
 
 ### Stocks
 ```bash
 # List Available Stocks
 curl http://localhost:3000/stocks
+
+# Response
+```json
+[
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000001",
+    "symbol": "AAPL",
+    "name": "Apple Inc."
+  },
+  {
+    "id": "a1b2c3d4-0002-4000-8000-000000000002",
+    "symbol": "TSLA",
+    "name": "Tesla, Inc."
+  }
+]
+```
 ```
 
 ---
@@ -190,7 +252,7 @@ Use `Idempotency-Key` header to prevent duplicate orders:
 ```bash
 curl -X POST http://localhost:3000/orders \
   -H "Idempotency-Key: YOUR-UNIQUE-UUID" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
   ...
 ```
 
@@ -200,13 +262,10 @@ curl -X POST http://localhost:3000/orders \
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/auth/signup` | No | Register new user |
-| POST | `/auth/login` | No | Login user |
-| GET | `/auth/me` | Yes | Get user profile |
-| POST | `/orders` | Yes | Create order |
-| GET | `/orders` | Yes | List user orders |
-| GET | `/orders/holdings` | Yes | Get holdings summary |
-| GET | `/orders/:id` | Yes | Get order by ID |
+| POST | `/orders` | No | Create order (BUY/SELL) |
+| GET | `/orders` | No | List all orders |
+| GET | `/orders/holdings` | No | Get platform balance, holdings, and total invested |
+| GET | `/orders/:id` | No | Get order by ID |
 | GET | `/stocks` | No | List available stocks |
 | GET | `/health` | No | Health check |
 

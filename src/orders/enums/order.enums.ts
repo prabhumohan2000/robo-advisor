@@ -5,5 +5,6 @@ export enum OrderType {
 
 export enum OrderStatus {
   PENDING = 'PENDING',
-  SCHEDULED = 'SCHEDULED',
+  SCHEDULED = 'SCHEDULED', 
+  QUEUED = 'QUEUED',       
 }
