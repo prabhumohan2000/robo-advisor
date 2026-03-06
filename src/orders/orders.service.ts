@@ -320,6 +320,8 @@ export class OrdersService {
     platformBalance: number;
     holdings: Array<{ symbol: string; shares: number }>;
     totalInvested: number;
+    totalOrdersBought: number;
+    totalOrdersSold: number;
   } {
     const holdings = Array.from(this.holdings.entries()).map(
       ([symbol, shares]) => ({
@@ -329,19 +331,26 @@ export class OrdersService {
     );
 
     // Calculate total invested by summing all BUY orders minus SELL orders
-    const totalInvested = this.orders.reduce((total, order) => {
+    let totalInvested = 0;
+    let totalOrdersBought = 0;
+    let totalOrdersSold = 0;
+
+    this.orders.forEach((order) => {
       if (order.orderType === OrderType.BUY) {
-        return total + order.totalAmount;
+        totalInvested += order.totalAmount;
+        totalOrdersBought++;
       } else if (order.orderType === OrderType.SELL) {
-        return total - order.totalAmount;
+        totalInvested -= order.totalAmount;
+        totalOrdersSold++;
       }
-      return total;
-    }, 0);
+    });
 
     return {
       platformBalance: Math.round(this.platformBalance * 100) / 100,
       holdings,
       totalInvested: Math.round(totalInvested * 100) / 100,
+      totalOrdersBought,
+      totalOrdersSold,
     };
   }
 

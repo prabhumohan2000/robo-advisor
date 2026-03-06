@@ -28,16 +28,18 @@ export class OrdersController {
 
   @Get('holdings')
   @ApiOperation({
-    summary: 'Get platform balance, current holdings, and total invested amount',
+    summary: 'Get platform balance, current holdings, and order statistics',
   })
   @ApiResponse({
     status: 200,
-    description: 'Platform balance and holdings information',
+    description: 'Platform balance, holdings, and order statistics',
   })
   getHoldings(): {
     platformBalance: number;
     holdings: Array<{ symbol: string; shares: number }>;
     totalInvested: number;
+    totalOrdersBought: number;
+    totalOrdersSold: number;
   } {
     return this.ordersService.getHoldings();
   }

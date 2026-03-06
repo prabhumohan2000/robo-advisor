@@ -456,6 +456,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(100000);
       expect(result.holdings).toEqual([]);
       expect(result.totalInvested).toBe(0);
+      expect(result.totalOrdersBought).toBe(0);
+      expect(result.totalOrdersSold).toBe(0);
     });
 
     it('should return correct holdings after BUY orders', () => {
@@ -474,6 +476,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(99000); // 100000 - 1000
       expect(result.holdings).toHaveLength(2);
       expect(result.totalInvested).toBe(1000);
+      expect(result.totalOrdersBought).toBe(1);
+      expect(result.totalOrdersSold).toBe(0);
 
       const aaplHolding = result.holdings.find((h) => h.symbol === 'AAPL');
       const tslaHolding = result.holdings.find((h) => h.symbol === 'TSLA');
@@ -503,6 +507,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(98500); // 100000 - 1000 - 500
       expect(result.holdings).toHaveLength(1);
       expect(result.totalInvested).toBe(1500);
+      expect(result.totalOrdersBought).toBe(2);
+      expect(result.totalOrdersSold).toBe(0);
       expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 15 }); // 10 + 5
     });
 
@@ -527,6 +533,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(99300); // 100000 - 1000 + 300
       expect(result.holdings).toHaveLength(1);
       expect(result.totalInvested).toBe(700); // 1000 - 300
+      expect(result.totalOrdersBought).toBe(1);
+      expect(result.totalOrdersSold).toBe(1);
       expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 7 }); // 10 - 3
     });
 
@@ -554,6 +562,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(98500); // 100000 - 2000 + 500
       expect(result.holdings).toHaveLength(2);
       expect(result.totalInvested).toBe(1500); // 2000 - 500
+      expect(result.totalOrdersBought).toBe(1);
+      expect(result.totalOrdersSold).toBe(1);
 
       const aaplHolding = result.holdings.find((h) => h.symbol === 'AAPL');
       const tslaHolding = result.holdings.find((h) => h.symbol === 'TSLA');
@@ -590,6 +600,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(97500); // 100000 - 2000 - 1000 + 500
       expect(result.holdings).toHaveLength(2);
       expect(result.totalInvested).toBe(2500); // 2000 + 1000 - 500
+      expect(result.totalOrdersBought).toBe(2);
+      expect(result.totalOrdersSold).toBe(1);
     });
 
     it('should handle fractional shares correctly', () => {
@@ -606,6 +618,8 @@ describe('OrdersService', () => {
       expect(result.platformBalance).toBe(99900);
       expect(result.holdings).toHaveLength(1);
       expect(result.totalInvested).toBe(100);
+      expect(result.totalOrdersBought).toBe(1);
+      expect(result.totalOrdersSold).toBe(0);
       expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 0.727 });
     });
   });
