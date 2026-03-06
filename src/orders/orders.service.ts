@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -23,6 +24,7 @@ interface IdempotencyRecord {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
   private readonly orders: Order[] = [];
   private platformBalance: number;
   private readonly fixedPrice: number;
@@ -49,7 +51,14 @@ export class OrdersService {
     this.shareDecimals = this.configService.get<number>('SHARE_DECIMALS') ?? 3;
   }
 
-  findAll(): Order[] {
+  findAll(orderType?: OrderType): Order[] {
+    this.logger.log(`Finding orders${orderType ? ` with filter: orderType=${orderType}` : ' (no filter)'}`);
+    if (orderType) {
+      const filtered = this.orders.filter((order) => order.orderType === orderType);
+      this.logger.log(`Filtered results: ${filtered.length} of ${this.orders.length} orders`);
+      return filtered;
+    }
+    this.logger.log(`Returning all ${this.orders.length} orders`);
     return this.orders;
   }
 
@@ -108,6 +117,12 @@ export class OrdersService {
   }
 
   create(dto: CreateOrderDto, idempotencyKey?: string): Order {
+    // Log initial request
+    this.logger.log(
+      `Received order request: ${dto.orderType} $${dto.amount} across ${dto.portfolio.length} stocks` +
+      (idempotencyKey ? ` [Idempotency-Key: ${idempotencyKey}]` : ''),
+    );
+
     if (idempotencyKey) {
       const requestHash = this.calculateRequestHash(dto);
       const existingRecord = this.idempotencyStore.get(idempotencyKey);
@@ -115,6 +130,9 @@ export class OrdersService {
       if (existingRecord) {
 
         if (existingRecord.requestHash !== requestHash) {
+          this.logger.warn(
+            `Idempotency key conflict: ${idempotencyKey} used with different payload`,
+          );
           throw new BadRequestException(
             'Idempotency key used with different request payload',
           );
@@ -124,6 +142,9 @@ export class OrdersService {
         const ageMs = now.getTime() - existingRecord.createdAt.getTime();
 
         if (ageMs < this.IDEMPOTENCY_TTL_MS) {
+          this.logger.log(
+            `Returning cached order ${existingRecord.order.id} for idempotency key ${idempotencyKey}`,
+          );
           return existingRecord.order;
         } else {
           this.idempotencyStore.delete(idempotencyKey);
@@ -185,8 +206,9 @@ export class OrdersService {
     }
 
     const { executeOn, status } = this.getExecutionDay();
+    const orderId = randomUUID();
     const order: Order = {
-      id: randomUUID(),
+      id: orderId,
       orderType: dto.orderType,
       totalAmount: Math.round(dto.amount * 100) / 100,
       items,
@@ -195,15 +217,26 @@ export class OrdersService {
       createdAt: new Date().toISOString(),
     };
 
+    this.logger.log(
+      `Order created: ${orderId} | Type: ${dto.orderType} | Amount: $${order.totalAmount} | ` +
+      `Status: ${status} | Will execute on: ${executeOn}`,
+    );
+
     this.orders.push(order);
     this.updateHoldings(items, dto.orderType);
 
     if (dto.orderType === OrderType.BUY) {
       this.platformBalance =
         Math.round((this.platformBalance - dto.amount) * 100) / 100;
+      this.logger.log(
+        `Platform balance updated: $${this.platformBalance} (deducted $${dto.amount})`,
+      );
     } else {
       this.platformBalance =
         Math.round((this.platformBalance + dto.amount) * 100) / 100;
+      this.logger.log(
+        `Platform balance updated: $${this.platformBalance} (added $${dto.amount})`,
+      );
     }
 
     if (idempotencyKey) {
@@ -213,6 +246,7 @@ export class OrdersService {
         createdAt: new Date(),
         requestHash,
       });
+      this.logger.log(`Idempotency record stored for key: ${idempotencyKey}`);
     }
 
     return order;
@@ -223,10 +257,11 @@ export class OrdersService {
     const estNow = toZonedTime(now, this.US_TIMEZONE);
 
     if (isWeekend(estNow)) {
+      // Weekend - order queued for next Monday
       const nextTradingDay = this.getNextTradingDay(estNow);
       return {
         executeOn: format(nextTradingDay, 'yyyy-MM-dd'),
-        status: OrderStatus.PENDING,
+        status: OrderStatus.QUEUED,
       };
     }
 
@@ -244,11 +279,16 @@ export class OrdersService {
         executeOn: format(estNow, 'yyyy-MM-dd'),
         status: OrderStatus.SCHEDULED,
       };
+    } else if (estNow < marketOpen) {
+      return {
+        executeOn: format(estNow, 'yyyy-MM-dd'),
+        status: OrderStatus.PENDING,
+      };
     } else {
       const nextTradingDay = this.getNextTradingDay(estNow);
       return {
         executeOn: format(nextTradingDay, 'yyyy-MM-dd'),
-        status: OrderStatus.PENDING,
+        status: OrderStatus.QUEUED,
       };
     }
   }

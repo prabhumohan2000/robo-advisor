@@ -181,6 +181,49 @@ describe('OrdersService', () => {
       const orders = service.findAll();
       expect(orders).toHaveLength(2);
     });
+
+    it('should filter orders by orderType BUY', () => {
+      const buyDto = {
+        amount: 100,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(buyDto);
+      service.create(buyDto);
+
+      // Create a SELL order to ensure filtering works
+      const sellDto = {
+        amount: 50,
+        orderType: OrderType.SELL,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+      service.create(sellDto);
+
+      const buyOrders = service.findAll(OrderType.BUY);
+      expect(buyOrders).toHaveLength(2);
+      expect(buyOrders.every(order => order.orderType === OrderType.BUY)).toBe(true);
+    });
+
+    it('should filter orders by orderType SELL', () => {
+      const buyDto = {
+        amount: 100,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+      service.create(buyDto);
+
+      const sellDto = {
+        amount: 50,
+        orderType: OrderType.SELL,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+      service.create(sellDto);
+
+      const sellOrders = service.findAll(OrderType.SELL);
+      expect(sellOrders).toHaveLength(1);
+      expect(sellOrders.every(order => order.orderType === OrderType.SELL)).toBe(true);
+    });
   });
 
   describe('findOne', () => {
@@ -204,53 +247,53 @@ describe('OrdersService', () => {
   });
 
   describe('getExecutionDay', () => {
-    it('should return SCHEDULED during US market hours (EST)', () => {
+    it('should return SCHEDULED status during US market hours (EST)', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-15T15:00:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.SCHEDULED);
       expect(result.executeOn).toBe('2024-01-15');
+      expect(result.status).toBe(OrderStatus.SCHEDULED);
     });
 
-    it('should return PENDING before market opens (before 9:30 AM EST)', () => {
+    it('should return PENDING status before market opens (before 9:30 AM EST)', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-15T13:00:00Z'));
       const result = service.getExecutionDay();
+      expect(result.executeOn).toBe('2024-01-15'); // Same day - market will open later
       expect(result.status).toBe(OrderStatus.PENDING);
-      expect(result.executeOn).toBe('2024-01-16');
     });
 
-    it('should return PENDING after market closes (after 4:00 PM EST)', () => {
+    it('should return QUEUED status after market closes (after 4:00 PM EST)', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-15T22:00:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-16');
+      expect(result.status).toBe(OrderStatus.QUEUED);
     });
 
-    it('should return PENDING with next Monday on Saturday', () => {
+    it('should return QUEUED status on Saturday with next Monday', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-13T15:00:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-15');
+      expect(result.status).toBe(OrderStatus.QUEUED);
     });
 
-    it('should return PENDING with next Monday on Sunday', () => {
+    it('should return QUEUED status on Sunday with next Monday', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-14T15:00:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-15');
+      expect(result.status).toBe(OrderStatus.QUEUED);
     });
 
     it('should handle market close boundary (exactly 4:00 PM EST)', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-15T21:00:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.executeOn).toBe('2024-01-16');
+      expect(result.status).toBe(OrderStatus.QUEUED);
     });
 
     it('should handle market open boundary (exactly 9:30 AM EST)', () => {
       jest.useFakeTimers().setSystemTime(new Date('2024-01-15T14:30:00Z'));
       const result = service.getExecutionDay();
-      expect(result.status).toBe(OrderStatus.SCHEDULED);
       expect(result.executeOn).toBe('2024-01-15');
+      expect(result.status).toBe(OrderStatus.SCHEDULED);
     });
   });
 

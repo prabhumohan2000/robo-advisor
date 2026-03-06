@@ -40,11 +40,9 @@ INITIAL_BALANCE=10000
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 3000 | Server port |
-| `JWT_SECRET` | (required) | JWT signing key |
-| `JWT_EXPIRES_IN` | 6h | Token expiration |
 | `FIXED_PRICE` | 100 | Default stock price ($) |
 | `SHARE_DECIMALS` | 3 | Share quantity precision |
-| `INITIAL_BALANCE` | 10000 | Initial user balance ($) |
+| `INITIAL_BALANCE` | 10000 | Initial platform balance ($) |
 
 ### 3. Run
 ```bash
@@ -85,30 +83,30 @@ Swagger UI: `http://localhost:3000/api`
 ┌─────────────────────────────────────┐
 │         NestJS Application          │
 ├─────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────────┐   │
-│  │   Auth   │  │   Orders     │   │
-│  │ Module   │  │   Module     │   │
-│  └────┬─────┘  └──────┬───────┘   │
-│       │                │            │
-│  ┌────▼────────────────▼───────┐   │
-│  │      Users Service          │   │
-│  └─────────────────────────────┘   │
+│  ┌──────────────┐  ┌─────────────┐ │
+│  │   Orders     │  │   Stocks    │ │
+│  │   Module     │  │   Module    │ │
+│  └──────┬───────┘  └──────┬──────┘ │
+│         │                 │         │
+│  ┌──────▼─────────────────▼──────┐ │
+│  │    Orders Service             │ │
+│  └───────────────────────────────┘ │
 │                                     │
 │  ┌─────────────────────────────┐   │
 │  │   In-Memory Storage         │   │
-│  │  • Users                    │   │
 │  │  • Orders                   │   │
 │  │  • Holdings                 │   │
+│  │  • Platform Balance         │   │
 │  │  • Idempotency Cache (24h)  │   │
 │  └─────────────────────────────┘   │
 └─────────────────────────────────────┘
 ```
 
 **Key Features:**
-- JWT authentication
-- Portfolio order splitting
-- Idempotency with SHA-256 hash validation
-- Market hours scheduling (US EST)
+- Portfolio order splitting with percentage allocation
+- Idempotency with SHA-256 hash validation (24h TTL)
+- Market hours scheduling (US EST 9:30 AM - 4:00 PM)
+- Smart order status (pending/scheduled/queued)
 - In-memory storage
 
 ---
@@ -116,22 +114,8 @@ Swagger UI: `http://localhost:3000/api`
 ## API Quick Reference
 
 ### Authentication
-```bash
-# Login
-curl -X POST http://localhost:3000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"password123"}'
 
-# Response
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "Bearer",
-  "expires_in": 21600,
-  "grant_type": "password"
-}
-```
-```
+**Note:** This API currently does not implement authentication. All endpoints are publicly accessible for development and testing purposes.
 
 ### Portfolio & Balance
 
@@ -170,7 +154,6 @@ curl http://localhost:3000/orders/holdings
 ```bash
 # Create Order (BUY)
 curl -X POST http://localhost:3000/orders \
-  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: 123e4567-e89b-12d3-a456-426614174000" \
   -d '{
@@ -215,8 +198,7 @@ curl -X POST http://localhost:3000/orders \
 ```
 
 # List Orders
-curl http://localhost:3000/orders \
-  -H "Authorization: Bearer YOUR_TOKEN"
+curl http://localhost:3000/orders
 
 # Response
 ```json
@@ -270,7 +252,7 @@ Use `Idempotency-Key` header to prevent duplicate orders:
 ```bash
 curl -X POST http://localhost:3000/orders \
   -H "Idempotency-Key: YOUR-UNIQUE-UUID" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
   ...
 ```
 
@@ -298,16 +280,6 @@ All validation errors return a single string message:
   "statusCode": 400,
   "message": "Amount must be at least $0.01; Percentage cannot exceed 100",
   "error": "Bad Request"
-}
-```
-
-If a login fails due to a non-existent email or wrong password, it returns a `401 Unauthorized` response:
-
-```json
-{
-  "statusCode": 401,
-  "message": "Invalid credentials",
-  "error": "Unauthorized"
 }
 ```
 

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Headers, Param, Post, Query } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import type { Order } from './interfaces/order.interface';
 import { CreateOrderDto } from './dto/order.dto';
+import { OrderType } from './enums/order.enums';
 
 @ApiTags('orders')
 @Controller('orders')
@@ -11,11 +12,18 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get all portfolio investment orders for the authenticated user',
+    summary: 'Get all portfolio investment orders',
+    description: 'Optionally filter by orderType (BUY or SELL)',
+  })
+  @ApiQuery({
+    name: 'orderType',
+    required: false,
+    enum: OrderType,
+    description: 'Filter orders by type (BUY or SELL)',
   })
   @ApiResponse({ status: 200, description: 'List of orders' })
-  getAllOrders(): Order[] {
-    return this.ordersService.findAll();
+  getAllOrders(@Query('orderType') orderType?: OrderType): Order[] {
+    return this.ordersService.findAll(orderType);
   }
 
   @Get('holdings')
