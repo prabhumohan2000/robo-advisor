@@ -7,15 +7,29 @@ My approach focused on building a robust order splitting system with proper vali
 1. **Understanding the Domain**: Started by analyzing how portfolio management works - users want to invest a fixed amount across multiple stocks based on percentage allocations. This required precise decimal handling to avoid rounding errors in financial calculations.
 
 2. **Core Architecture**: Built around NestJS modules for separation of concerns:
-   - Auth module for JWT-based authentication
-   - Orders module for the main business logic
-   - Users service to manage balances and holdings
+   - Orders module for the main business logic (order creation, portfolio splitting)
+   - Platform-level balance management (deposit/withdraw APIs)
+   - Holdings tracking for stock positions
 
 3. **Order Splitting Logic**: Implemented proportional allocation where each stock gets `(totalAmount × percentage) / 100`, then divided by price to get shares. Used the Decimal.js library to handle precise decimal arithmetic.
 
 4. **Market Hours Validation**: Added execution date calculation based on US market hours (9:30 AM - 4:00 PM EST), weekends, and scheduling logic for after-hours orders.
 
-5. **Testing Strategy**: Wrote comprehensive unit tests covering edge cases like insufficient balance, invalid percentages, sell operations with insufficient holdings, and idempotency scenarios.
+5. **Testing Strategy**: Wrote comprehensive unit tests (37 tests total) covering:
+   - Edge cases like insufficient balance, invalid percentages
+   - SELL operations with insufficient holdings validation
+   - Idempotency scenarios (duplicate requests, payload conflicts)
+   - Holdings tracking across multiple BUY/SELL operations
+   - Fractional share calculations
+   - Balance changes through trading operations
+   - Achieved 98%+ code coverage on the orders service
+
+6. **Platform-Level Balance**: Implemented a single unified platform balance (not user-level):
+   - Platform starts with configurable initial balance (`INITIAL_BALANCE` in `.env`)
+   - `/orders/holdings` - Returns platform balance, stock holdings, and total invested amount
+   - BUY orders reduce balance, SELL orders increase balance
+   - Balance is managed entirely through trading operations
+   - No separate deposit/withdraw mechanisms - balance changes only through trades
 
 ---
 
@@ -24,9 +38,9 @@ My approach focused on building a robust order splitting system with proper vali
 **Business Assumptions:**
 - The system uses US stock market hours (NYSE/NASDAQ: 9:30 AM - 4:00 PM EST)
 - Orders placed during market hours execute same-day; orders placed outside market hours or on weekends are scheduled for the next trading day
-- Each user starts with an initial balance (configurable via environment variable)
 - Stock prices are either fixed (default $100) or provided by the client per stock
 - Market holidays are not tracked - only weekends and market hours matter
+- The platform uses a single unified master balance rather than individual user accounts. Trade execution affects this universal pool.
 
 **Technical Assumptions:**
 - In-memory storage is acceptable for this prototype (no database required)
@@ -37,8 +51,9 @@ My approach focused on building a robust order splitting system with proper vali
 
 **Data Assumptions:**
 - Share quantities can be fractional (e.g., 10.567 shares) with configurable decimal precision
-- Users can hold negative balances temporarily (no hard enforcement in prototype)
-- Holdings are calculated by aggregating all historical orders (no separate holdings table)
+- Holdings are tracked in-memory and updated with each BUY/SELL transaction
+- Total invested is calculated by summing all BUY orders minus SELL orders
+- Platform balance cannot go negative (enforced validation on BUY orders and withdrawals)
 
 ---
 

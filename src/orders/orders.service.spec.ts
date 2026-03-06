@@ -2,29 +2,14 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { OrdersService } from './orders.service';
-import { UsersService } from '../users/users.service';
 import { OrderStatus, OrderType } from './enums/order.enums';
 import { STOCKS } from '../stocks/stocks.constants';
 
 const AAPL_ID = STOCKS.AAPL.id;
 const TSLA_ID = STOCKS.TSLA.id;
-const USER_ID = 'user-123';
-
-const mockUser = {
-  id: USER_ID,
-  email: 'test@test.com',
-  passwordHash: 'hash',
-  balance: 10000,
-  createdAt: new Date().toISOString(),
-};
 
 describe('OrdersService', () => {
   let service: OrdersService;
-  let usersService: {
-    findById: jest.Mock;
-    deductBalance: jest.Mock;
-    addBalance: jest.Mock;
-  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -36,23 +21,15 @@ describe('OrdersService', () => {
             get: jest.fn((key: string) => {
               if (key === 'FIXED_PRICE') return 100;
               if (key === 'SHARE_DECIMALS') return 3;
+              if (key === 'INITIAL_BALANCE') return 100000;
               return undefined;
             }),
-          },
-        },
-        {
-          provide: UsersService,
-          useValue: {
-            findById: jest.fn().mockReturnValue({ ...mockUser }),
-            deductBalance: jest.fn(),
-            addBalance: jest.fn(),
           },
         },
       ],
     }).compile();
 
     service = module.get<OrdersService>(OrdersService);
-    usersService = module.get(UsersService);
   });
 
   afterEach(() => jest.useRealTimers());
@@ -81,7 +58,7 @@ describe('OrdersService', () => {
     };
 
     it('should create a BUY order with correctly split items', () => {
-      const order = service.create(buyDto, USER_ID);
+      const order = service.create(buyDto);
 
       expect(order.orderType).toBe(OrderType.BUY);
       expect(order.totalAmount).toBe(1000);
@@ -96,9 +73,9 @@ describe('OrdersService', () => {
       expect(tsla.shares).toBe(4);
     });
 
-    it('should deduct balance after a BUY', () => {
-      service.create(buyDto, USER_ID);
-      expect(usersService.deductBalance).toHaveBeenCalledWith(USER_ID, 1000);
+    it('should deduct platform balance after a BUY', () => {
+      service.create(buyDto);
+      expect((service as any).platformBalance).toBe(100000 - 1000);
     });
 
     it('should throw BadRequestException if percentages do not sum to 100', () => {
@@ -106,16 +83,16 @@ describe('OrdersService', () => {
         ...buyDto,
         portfolio: [{ stockId: AAPL_ID, percentage: 60 }],
       };
-      expect(() => service.create(dto, USER_ID)).toThrow(
+      expect(() => service.create(dto)).toThrow(
         new BadRequestException(
           'Portfolio percentages must sum to 100, got 60.00',
         ),
       );
     });
 
-    it('should throw BadRequestException if balance is insufficient', () => {
-      usersService.findById.mockReturnValue({ ...mockUser, balance: 50 });
-      expect(() => service.create(buyDto, USER_ID)).toThrow(
+    it('should throw BadRequestException if platform balance is insufficient', () => {
+      (service as any).platformBalance = 50;
+      expect(() => service.create(buyDto)).toThrow(
         BadRequestException,
       );
     });
@@ -129,7 +106,7 @@ describe('OrdersService', () => {
           { stockId: TSLA_ID, percentage: 40 },
         ],
       };
-      expect(() => service.create(dto, USER_ID)).toThrow(BadRequestException);
+      expect(() => service.create(dto)).toThrow(BadRequestException);
     });
 
     it('should use marketPrice when provided and >= fixedPrice', () => {
@@ -138,7 +115,7 @@ describe('OrdersService', () => {
         orderType: OrderType.BUY,
         portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 200 }],
       };
-      const order = service.create(dto, USER_ID);
+      const order = service.create(dto);
       expect(order.items[0].shares).toBe(5); // 1000 / $200
     });
   });
@@ -154,7 +131,7 @@ describe('OrdersService', () => {
     };
 
     it('should create a SELL order and add balance', () => {
-      service.create(buyDto, USER_ID);
+      service.create(buyDto);
 
       const sellDto = {
         amount: 300,
@@ -165,7 +142,7 @@ describe('OrdersService', () => {
         ],
       };
 
-      const order = service.create(sellDto, USER_ID);
+      const order = service.create(sellDto);
 
       expect(order.orderType).toBe(OrderType.SELL);
       expect(order.totalAmount).toBe(300);
@@ -173,11 +150,11 @@ describe('OrdersService', () => {
       const aapl = order.items.find((i) => i.symbol === 'AAPL')!;
       expect(aapl.shares).toBe(1.5); // $150 / $100
 
-      expect(usersService.addBalance).toHaveBeenCalledWith(USER_ID, 300);
+      expect((service as any).platformBalance).toBe(100000 - 1000 + 300);
     });
 
     it('should throw BadRequestException when selling more shares than held', () => {
-      service.create(buyDto, USER_ID);
+      service.create(buyDto);
 
       const sellDto = {
         amount: 2000,
@@ -185,25 +162,24 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      expect(() => service.create(sellDto, USER_ID)).toThrow(
+      expect(() => service.create(sellDto)).toThrow(
         BadRequestException,
       );
     });
   });
 
   describe('findAll', () => {
-    it('should return only orders belonging to the given user', () => {
+    it('should return all orders', () => {
       const dto = {
         amount: 100,
         orderType: OrderType.BUY,
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
-      service.create(dto, USER_ID);
-      service.create(dto, 'other-user');
+      service.create(dto);
+      service.create(dto);
 
-      const orders = service.findAll(USER_ID);
-      expect(orders).toHaveLength(1);
-      expect(orders[0].userId).toBe(USER_ID);
+      const orders = service.findAll();
+      expect(orders).toHaveLength(2);
     });
   });
 
@@ -214,22 +190,15 @@ describe('OrdersService', () => {
       portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
     };
 
-    it('should return the order for the correct user and id', () => {
-      const created = service.create(dto, USER_ID);
-      const found = service.findOne(created.id, USER_ID);
+    it('should return the order for the given id', () => {
+      const created = service.create(dto);
+      const found = service.findOne(created.id);
       expect(found.id).toBe(created.id);
-    });
-
-    it('should throw NotFoundException when order belongs to a different user', () => {
-      const created = service.create(dto, USER_ID);
-      expect(() => service.findOne(created.id, 'other-user')).toThrow(
-        NotFoundException,
-      );
     });
 
     it('should throw NotFoundException for a non-existent order id', () => {
       expect(() =>
-        service.findOne('00000000-0000-0000-0000-000000000000', USER_ID),
+        service.findOne('00000000-0000-0000-0000-000000000000'),
       ).toThrow(NotFoundException);
     });
   });
@@ -295,7 +264,7 @@ describe('OrdersService', () => {
           { stockId: TSLA_ID, percentage: 66.67 },
         ],
       };
-      const order = service.create(dto, USER_ID);
+      const order = service.create(dto);
 
       expect(order.totalAmount).toBe(1000.33);
       const aapl = order.items.find((i) => i.symbol === 'AAPL')!;
@@ -314,7 +283,7 @@ describe('OrdersService', () => {
           { stockId: TSLA_ID, percentage: 66.67 },
         ],
       };
-      expect(() => service.create(dto, USER_ID)).not.toThrow();
+      expect(() => service.create(dto)).not.toThrow();
     });
 
     it('should reject percentages that exceed tolerance', () => {
@@ -326,7 +295,7 @@ describe('OrdersService', () => {
           { stockId: TSLA_ID, percentage: 66 },
         ],
       };
-      expect(() => service.create(dto, USER_ID)).toThrow(BadRequestException);
+      expect(() => service.create(dto)).toThrow(BadRequestException);
     });
 
     it('should handle very small amounts with precision', () => {
@@ -335,7 +304,7 @@ describe('OrdersService', () => {
         orderType: OrderType.BUY,
         portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 150 }],
       };
-      const order = service.create(dto, USER_ID);
+      const order = service.create(dto);
       expect(order.totalAmount).toBe(0.01);
       expect(order.items[0].shares).toBe(0);
     });
@@ -346,57 +315,11 @@ describe('OrdersService', () => {
         orderType: OrderType.BUY,
         portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 137.5 }],
       };
-      const order = service.create(dto, USER_ID);
+      const order = service.create(dto);
       expect(order.items[0].shares).toBe(0.727);
     });
   });
 
-  describe('getHoldings', () => {
-    it('should return correct summary after a BUY', () => {
-      const dto = {
-        amount: 1000,
-        orderType: OrderType.BUY,
-        portfolio: [
-          { stockId: AAPL_ID, percentage: 60 },
-          { stockId: TSLA_ID, percentage: 40 },
-        ],
-      };
-      service.create(dto, USER_ID);
-
-      const summary = service.getHoldings(USER_ID);
-
-      expect(summary.totalInvested).toBe(1000);
-      expect(summary.totalSold).toBe(0);
-      expect(summary.netAmount).toBe(1000);
-
-      const aapl = summary.holdings.find((h) => h.symbol === 'AAPL')!;
-      expect(aapl.shares).toBe(6);
-      expect(aapl.totalInvested).toBe(600);
-    });
-
-    it('should reflect sold shares in the holdings summary', () => {
-      const buyDto = {
-        amount: 1000,
-        orderType: OrderType.BUY,
-        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
-      };
-      service.create(buyDto, USER_ID);
-
-      const sellDto = {
-        amount: 500,
-        orderType: OrderType.SELL,
-        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
-      };
-      service.create(sellDto, USER_ID);
-
-      const summary = service.getHoldings(USER_ID);
-      const aapl = summary.holdings.find((h) => h.symbol === 'AAPL')!;
-
-      expect(aapl.shares).toBe(5);
-      expect(summary.totalSold).toBe(500);
-      expect(summary.netAmount).toBe(500);
-    });
-  });
 
   describe('Idempotency', () => {
     const idempotencyKey = '123e4567-e89b-12d3-a456-426614174000';
@@ -408,7 +331,7 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      const order = service.create(dto, USER_ID, idempotencyKey);
+      const order = service.create(dto, idempotencyKey);
 
       expect(order).toBeDefined();
       expect(order.id).toBeDefined();
@@ -422,25 +345,11 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      const order1 = service.create(dto, USER_ID, idempotencyKey);
-      const order2 = service.create(dto, USER_ID, idempotencyKey);
+      const order1 = service.create(dto, idempotencyKey);
+      const order2 = service.create(dto, idempotencyKey);
 
       expect(order2.id).toBe(order1.id);
       expect(order2).toEqual(order1);
-    });
-
-    it('should throw error when same key used by different user', () => {
-      const dto = {
-        amount: 1000,
-        orderType: OrderType.BUY,
-        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
-      };
-
-      service.create(dto, USER_ID, idempotencyKey);
-
-      expect(() => service.create(dto, 'different-user', idempotencyKey)).toThrow(
-        BadRequestException,
-      );
     });
 
     it('should throw error when same key used with different payload', () => {
@@ -456,9 +365,9 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      service.create(dto1, USER_ID, idempotencyKey);
+      service.create(dto1, idempotencyKey);
 
-      expect(() => service.create(dto2, USER_ID, idempotencyKey)).toThrow(
+      expect(() => service.create(dto2, idempotencyKey)).toThrow(
         new BadRequestException(
           'Idempotency key used with different request payload',
         ),
@@ -472,8 +381,8 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      const order1 = service.create(dto, USER_ID);
-      const order2 = service.create(dto, USER_ID);
+      const order1 = service.create(dto);
+      const order2 = service.create(dto);
 
       expect(order1.id).not.toBe(order2.id);
     });
@@ -486,7 +395,7 @@ describe('OrdersService', () => {
         portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
       };
 
-      service.create(dto, USER_ID, 'expired-key');
+      service.create(dto, 'expired-key');
 
       jest.advanceTimersByTime(25 * 60 * 60 * 1000);
 
@@ -494,6 +403,167 @@ describe('OrdersService', () => {
       expect(removed).toBe(1);
 
       jest.useRealTimers();
+    });
+  });
+
+  describe('getHoldings', () => {
+    it('should return initial platform balance with no holdings when no orders exist', () => {
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(100000);
+      expect(result.holdings).toEqual([]);
+      expect(result.totalInvested).toBe(0);
+    });
+
+    it('should return correct holdings after BUY orders', () => {
+      const buyDto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [
+          { stockId: AAPL_ID, percentage: 60 },
+          { stockId: TSLA_ID, percentage: 40 },
+        ],
+      };
+
+      service.create(buyDto);
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(99000); // 100000 - 1000
+      expect(result.holdings).toHaveLength(2);
+      expect(result.totalInvested).toBe(1000);
+
+      const aaplHolding = result.holdings.find((h) => h.symbol === 'AAPL');
+      const tslaHolding = result.holdings.find((h) => h.symbol === 'TSLA');
+
+      expect(aaplHolding).toEqual({ symbol: 'AAPL', shares: 6 });
+      expect(tslaHolding).toEqual({ symbol: 'TSLA', shares: 4 });
+    });
+
+    it('should update holdings after multiple BUY orders', () => {
+      const buyDto1 = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const buyDto2 = {
+        amount: 500,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(buyDto1);
+      service.create(buyDto2);
+
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(98500); // 100000 - 1000 - 500
+      expect(result.holdings).toHaveLength(1);
+      expect(result.totalInvested).toBe(1500);
+      expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 15 }); // 10 + 5
+    });
+
+    it('should reduce holdings and totalInvested after SELL orders', () => {
+      const buyDto = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const sellDto = {
+        amount: 300,
+        orderType: OrderType.SELL,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(buyDto);
+      service.create(sellDto);
+
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(99300); // 100000 - 1000 + 300
+      expect(result.holdings).toHaveLength(1);
+      expect(result.totalInvested).toBe(700); // 1000 - 300
+      expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 7 }); // 10 - 3
+    });
+
+    it('should handle mixed BUY and SELL orders across multiple stocks', () => {
+      const buyDto = {
+        amount: 2000,
+        orderType: OrderType.BUY,
+        portfolio: [
+          { stockId: AAPL_ID, percentage: 50 },
+          { stockId: TSLA_ID, percentage: 50 },
+        ],
+      };
+
+      const sellDto = {
+        amount: 500,
+        orderType: OrderType.SELL,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(buyDto);
+      service.create(sellDto);
+
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(98500); // 100000 - 2000 + 500
+      expect(result.holdings).toHaveLength(2);
+      expect(result.totalInvested).toBe(1500); // 2000 - 500
+
+      const aaplHolding = result.holdings.find((h) => h.symbol === 'AAPL');
+      const tslaHolding = result.holdings.find((h) => h.symbol === 'TSLA');
+
+      expect(aaplHolding).toEqual({ symbol: 'AAPL', shares: 5 }); // 10 - 5
+      expect(tslaHolding).toEqual({ symbol: 'TSLA', shares: 10 });
+    });
+
+    it('should track balance changes through BUY and SELL operations', () => {
+      const buyDto1 = {
+        amount: 2000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      const buyDto2 = {
+        amount: 1000,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: TSLA_ID, percentage: 100 }],
+      };
+
+      const sellDto = {
+        amount: 500,
+        orderType: OrderType.SELL,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100 }],
+      };
+
+      service.create(buyDto1); // Balance: 98000
+      service.create(buyDto2); // Balance: 97000
+      service.create(sellDto); // Balance: 97500
+
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(97500); // 100000 - 2000 - 1000 + 500
+      expect(result.holdings).toHaveLength(2);
+      expect(result.totalInvested).toBe(2500); // 2000 + 1000 - 500
+    });
+
+    it('should handle fractional shares correctly', () => {
+      const buyDto = {
+        amount: 100,
+        orderType: OrderType.BUY,
+        portfolio: [{ stockId: AAPL_ID, percentage: 100, marketPrice: 137.5 }],
+      };
+
+      service.create(buyDto);
+
+      const result = service.getHoldings();
+
+      expect(result.platformBalance).toBe(99900);
+      expect(result.holdings).toHaveLength(1);
+      expect(result.totalInvested).toBe(100);
+      expect(result.holdings[0]).toEqual({ symbol: 'AAPL', shares: 0.727 });
     });
   });
 });

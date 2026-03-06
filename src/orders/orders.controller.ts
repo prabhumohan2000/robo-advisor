@@ -1,50 +1,45 @@
-import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiHeader,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import type { Request } from 'express';
-import type { HoldingsSummary, Order } from './interfaces/order.interface';
+import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import type { Order } from './interfaces/order.interface';
 import { CreateOrderDto } from './dto/order.dto';
 
 @ApiTags('orders')
-@ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(private readonly ordersService: OrdersService) { }
 
   @Get()
   @ApiOperation({
     summary: 'Get all portfolio investment orders for the authenticated user',
   })
   @ApiResponse({ status: 200, description: 'List of orders' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  getAllOrders(@Req() req: Request): Order[] {
-    return this.ordersService.findAll(req.user!.sub);
+  getAllOrders(): Order[] {
+    return this.ordersService.findAll();
   }
 
   @Get('holdings')
   @ApiOperation({
-    summary: 'Get current holdings summary — shares, invested, sold per stock',
+    summary: 'Get platform balance, current holdings, and total invested amount',
   })
-  @ApiResponse({ status: 200, description: 'Holdings summary' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  getHoldings(@Req() req: Request): HoldingsSummary {
-    return this.ordersService.getHoldings(req.user!.sub);
+  @ApiResponse({
+    status: 200,
+    description: 'Platform balance and holdings information',
+  })
+  getHoldings(): {
+    platformBalance: number;
+    holdings: Array<{ symbol: string; shares: number }>;
+    totalInvested: number;
+  } {
+    return this.ordersService.getHoldings();
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single order by ID' })
   @ApiResponse({ status: 200, description: 'Order found' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Order not found' })
-  getOrderById(@Req() req: Request, @Param('id') id: string): Order {
-    return this.ordersService.findOne(id, req.user!.sub);
+  getOrderById(@Param('id') id: string): Order {
+    return this.ordersService.findOne(id);
   }
 
   @Post()
@@ -112,12 +107,10 @@ export class OrdersController {
     status: 400,
     description: 'Validation error, insufficient balance/shares, or idempotency conflict',
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
   createOrder(
-    @Req() req: Request,
     @Body() createOrderDto: CreateOrderDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Order {
-    return this.ordersService.create(createOrderDto, req.user!.sub, idempotencyKey);
+    return this.ordersService.create(createOrderDto, idempotencyKey);
   }
 }
