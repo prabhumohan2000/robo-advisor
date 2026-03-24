@@ -9,6 +9,8 @@ import { createHash, randomUUID } from 'crypto';
 import { addDays, format, isWeekend, setHours, setMinutes } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import Decimal from 'decimal.js';
+import { AccountsService } from '../accounts/accounts.service';
+import { EventsService } from '../events/events.service';
 import { STOCKS } from '../stocks/stocks.constants';
 import { CreateOrderDto } from './dto/order.dto';
 import { OrderStatus, OrderType } from './enums/order.enums';
@@ -26,7 +28,6 @@ interface IdempotencyRecord {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
   private readonly orders: Order[] = [];
-  private platformBalance: number;
   private readonly fixedPrice: number;
   private readonly shareDecimals: number;
 
@@ -36,17 +37,15 @@ export class OrdersService {
   private readonly MARKET_CLOSE_HOUR = 16;
   private readonly MARKET_CLOSE_MINUTE = 0;
 
-  private readonly holdings = new Map<string, number>();
-
   private readonly idempotencyStore = new Map<string, IdempotencyRecord>();
 
   private readonly IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly accountsService: AccountsService,
+    private readonly eventsService: EventsService,
   ) {
-    this.platformBalance =
-      this.configService.get<number>('INITIAL_BALANCE') ?? 100000;
     this.fixedPrice = this.configService.get<number>('FIXED_PRICE') ?? 100;
     this.shareDecimals = this.configService.get<number>('SHARE_DECIMALS') ?? 3;
   }
@@ -94,32 +93,10 @@ export class OrdersService {
     return createHash('sha256').update(payload).digest('hex');
   }
 
-  private getHeldShares(symbol: string): number {
-    return this.holdings.get(symbol) ?? 0;
-  }
-
-  private updateHoldings(
-    items: OrderItem[],
-    orderType: OrderType,
-  ): void {
-    for (const item of items) {
-      const current = new Decimal(this.holdings.get(item.symbol) ?? 0);
-      const updated =
-        orderType === OrderType.BUY
-          ? current.plus(item.shares)
-          : current.minus(item.shares);
-      this.holdings.set(
-        item.symbol,
-        Math.round(updated.toNumber() * Math.pow(10, this.shareDecimals)) /
-        Math.pow(10, this.shareDecimals),
-      );
-    }
-  }
-
   create(dto: CreateOrderDto, idempotencyKey?: string): Order {
-    // Log initial request
+    this.accountsService.findOne(dto.accountId);
     this.logger.log(
-      `Received order request: ${dto.orderType} $${dto.amount} across ${dto.portfolio.length} stocks` +
+      `Received order request: Account ${dto.accountId} | ${dto.orderType} $${dto.amount} across ${dto.portfolio.length} stocks` +
       (idempotencyKey ? ` [Idempotency-Key: ${idempotencyKey}]` : ''),
     );
 
@@ -178,39 +155,37 @@ export class OrdersService {
         .times(item.percentage)
         .dividedBy(100);
       const shares = allocatedAmount.dividedBy(price);
-
+      const roundedShares = Math.round(shares.toNumber() * Math.pow(10, this.shareDecimals)) / Math.pow(10, this.shareDecimals);
+      const actualAmount = new Decimal(roundedShares).times(price);
       return {
         symbol: this.findStock(item.stockId).symbol,
-        amount: Math.round(allocatedAmount.toNumber() * 100) / 100,
-        shares: Math.round(shares.toNumber() * Math.pow(10, this.shareDecimals)) / Math.pow(10, this.shareDecimals),
+        amount: Math.round(actualAmount.toNumber() * 100) / 100,
+        shares: roundedShares,
       };
     });
 
-    if (dto.orderType === OrderType.BUY) {
-      if (dto.amount > this.platformBalance) {
-        throw new BadRequestException(
-          `Insufficient platform balance: requested $${dto.amount}, available $${this.platformBalance}`,
-        );
-      }
+    const actualTotal = items.reduce(
+      (sum, item) => sum.plus(item.amount),
+      new Decimal(0),
+    );
+    const actualTotalRounded = Math.round(actualTotal.toNumber() * 100) / 100;
+    if (dto.orderType === OrderType.SELL) {
+      this.accountsService.checkSufficientShares(dto.accountId, items);
     }
 
-    if (dto.orderType === OrderType.SELL) {
-      for (const item of items) {
-        const held = this.getHeldShares(item.symbol);
-        if (item.shares > held) {
-          throw new BadRequestException(
-            `Insufficient shares for ${item.symbol}: requested ${item.shares}, held ${held}`,
-          );
-        }
-      }
-    }
+    this.accountsService.checkAndDeductBalance(
+      dto.accountId,
+      actualTotalRounded,
+      dto.orderType,
+    );
 
     const { executeOn, status } = this.getExecutionDay();
     const orderId = randomUUID();
     const order: Order = {
       id: orderId,
+      accountId: dto.accountId,
       orderType: dto.orderType,
-      totalAmount: Math.round(dto.amount * 100) / 100,
+      totalAmount: actualTotalRounded,
       items,
       executeOn,
       status,
@@ -218,26 +193,18 @@ export class OrdersService {
     };
 
     this.logger.log(
-      `Order created: ${orderId} | Type: ${dto.orderType} | Amount: $${order.totalAmount} | ` +
+      `Order created: ${orderId} | Account: ${dto.accountId} | Type: ${dto.orderType} | Amount: $${order.totalAmount} | ` +
       `Status: ${status} | Will execute on: ${executeOn}`,
     );
 
     this.orders.push(order);
-    this.updateHoldings(items, dto.orderType);
-
-    if (dto.orderType === OrderType.BUY) {
-      this.platformBalance =
-        Math.round((this.platformBalance - dto.amount) * 100) / 100;
-      this.logger.log(
-        `Platform balance updated: $${this.platformBalance} (deducted $${dto.amount})`,
-      );
-    } else {
-      this.platformBalance =
-        Math.round((this.platformBalance + dto.amount) * 100) / 100;
-      this.logger.log(
-        `Platform balance updated: $${this.platformBalance} (added $${dto.amount})`,
-      );
-    }
+    this.accountsService.updateHoldings(dto.accountId, items, dto.orderType);
+    this.eventsService.emitOrderCreated({
+      data: {
+        order,
+        accountId: dto.accountId,
+      },
+    });
 
     if (idempotencyKey) {
       const requestHash = this.calculateRequestHash(dto);
@@ -257,7 +224,6 @@ export class OrdersService {
     const estNow = toZonedTime(now, this.US_TIMEZONE);
 
     if (isWeekend(estNow)) {
-      // Weekend - order queued for next Monday
       const nextTradingDay = this.getNextTradingDay(estNow);
       return {
         executeOn: format(nextTradingDay, 'yyyy-MM-dd'),
@@ -312,46 +278,6 @@ export class OrdersService {
         removedCount++;
       }
     }
-
     return removedCount;
   }
-
-  getHoldings(): {
-    platformBalance: number;
-    holdings: Array<{ symbol: string; shares: number }>;
-    totalInvested: number;
-    totalOrdersBought: number;
-    totalOrdersSold: number;
-  } {
-    const holdings = Array.from(this.holdings.entries()).map(
-      ([symbol, shares]) => ({
-        symbol,
-        shares,
-      }),
-    );
-
-    // Calculate total invested by summing all BUY orders minus SELL orders
-    let totalInvested = 0;
-    let totalOrdersBought = 0;
-    let totalOrdersSold = 0;
-
-    this.orders.forEach((order) => {
-      if (order.orderType === OrderType.BUY) {
-        totalInvested += order.totalAmount;
-        totalOrdersBought++;
-      } else if (order.orderType === OrderType.SELL) {
-        totalInvested -= order.totalAmount;
-        totalOrdersSold++;
-      }
-    });
-
-    return {
-      platformBalance: Math.round(this.platformBalance * 100) / 100,
-      holdings,
-      totalInvested: Math.round(totalInvested * 100) / 100,
-      totalOrdersBought,
-      totalOrdersSold,
-    };
-  }
-
 }

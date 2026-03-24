@@ -8,10 +8,13 @@ export interface OrderItem {
 
 export interface Order {
   id: string;
+  accountId: string;
   orderType: OrderType;
   totalAmount: number;
   items: OrderItem[];
   executeOn: string;
   status: OrderStatus;
   createdAt: string;
+  executedAt?: string;
+  failureReason?: string;
 }

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Post, Query } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { OrderExecutionService } from './order-execution.service';
 import { OrdersService } from './orders.service';
 import type { Order } from './interfaces/order.interface';
 import { CreateOrderDto } from './dto/order.dto';
@@ -8,7 +9,10 @@ import { OrderType } from './enums/order.enums';
 @ApiTags('orders')
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) { }
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly executionService: OrderExecutionService,
+  ) { }
 
   @Get()
   @ApiOperation({
@@ -24,24 +28,6 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'List of orders' })
   getAllOrders(@Query('orderType') orderType?: OrderType): Order[] {
     return this.ordersService.findAll(orderType);
-  }
-
-  @Get('holdings')
-  @ApiOperation({
-    summary: 'Get platform balance, current holdings, and order statistics',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Platform balance, holdings, and order statistics',
-  })
-  getHoldings(): {
-    platformBalance: number;
-    holdings: Array<{ symbol: string; shares: number }>;
-    totalInvested: number;
-    totalOrdersBought: number;
-    totalOrdersSold: number;
-  } {
-    return this.ordersService.getHoldings();
   }
 
   @Get(':id')
@@ -65,6 +51,7 @@ export class OrdersController {
       buy: {
         summary: 'Invest $100 — AAPL 60% + TSLA 40% (mixed prices)',
         value: {
+          accountId: 'a1b2c3d4-e5f6-4000-8000-000000000001',
           amount: 100,
           orderType: 'BUY',
           portfolio: [
@@ -83,6 +70,7 @@ export class OrdersController {
       buyDefault: {
         summary: 'Invest $100 — AAPL 60% + TSLA 40% (default price)',
         value: {
+          accountId: 'a1b2c3d4-e5f6-4000-8000-000000000001',
           amount: 100,
           orderType: 'BUY',
           portfolio: [
@@ -100,6 +88,7 @@ export class OrdersController {
       sell: {
         summary: 'Sell $50 — AAPL 100%',
         value: {
+          accountId: 'a1b2c3d4-e5f6-4000-8000-000000000001',
           amount: 50,
           orderType: 'SELL',
           portfolio: [
@@ -122,5 +111,36 @@ export class OrdersController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Order {
     return this.ordersService.create(createOrderDto, idempotencyKey);
+  }
+
+  @Post(':id/execute')
+  @ApiOperation({
+    summary: 'Execute a specific order by ID',
+    description: 'Manually trigger execution of a pending/scheduled/queued order',
+  })
+  @ApiResponse({ status: 200, description: 'Order executed successfully' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  async executeOrder(@Param('id') id: string): Promise<Order> {
+    return this.executionService.executeOrder(id);
+  }
+
+  @Post('execute/:date')
+  @ApiOperation({
+    summary: 'Execute all orders for a specific date',
+    description: 'Execute all pending/scheduled/queued orders for the given date (YYYY-MM-DD format)',
+  })
+  @ApiResponse({ status: 200, description: 'Orders executed successfully' })
+  async executeOrdersForDate(@Param('date') date: string): Promise<Order[]> {
+    return this.executionService.executeOrdersForDate(date);
+  }
+
+  @Get('execution/stats')
+  @ApiOperation({
+    summary: 'Get order execution statistics',
+    description: 'Returns count of orders by status (pending, scheduled, queued, executed, failed)',
+  })
+  @ApiResponse({ status: 200, description: 'Execution statistics' })
+  getExecutionStats() {
+    return this.executionService.getExecutionStats();
   }
 }
