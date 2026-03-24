@@ -47,6 +47,13 @@ export class PortfolioItemDto {
 
 export class CreateOrderDto {
   @ApiProperty({
+    description: 'Account ID for this order',
+    example: 'a1b2c3d4-e5f6-4000-8000-000000000001',
+  })
+  @IsUUID('all', { message: 'Account ID must be a valid UUID' })
+  accountId: string;
+  
+  @ApiProperty({
     description: 'Total amount to invest or sell',
     example: 100,
     minimum: 0.01,

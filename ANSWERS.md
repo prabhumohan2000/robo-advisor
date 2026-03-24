@@ -2,20 +2,40 @@
 
 ## What was your approach (thought process) to tackling this project?
 
-My approach focused on building a robust order splitting system with proper validation and user experience:
+My approach focused on building a robust, scalable order splitting system with event-driven architecture:
 
 1. **Understanding the Domain**: Started by analyzing how portfolio management works - users want to invest a fixed amount across multiple stocks based on percentage allocations. This required precise decimal handling to avoid rounding errors in financial calculations.
 
-2. **Core Architecture**: Built around NestJS modules for separation of concerns:
-   - Orders module for the main business logic (order creation, portfolio splitting)
-   - Platform-level balance management (deposit/withdraw APIs)
-   - Holdings tracking for stock positions
+2. **Core Architecture**: Built around NestJS modules with clear separation of concerns:
+   - **Accounts Module**: Multi-tenant account management with per-account balances and holdings
+   - **Orders Module**: Order creation, portfolio splitting, and execution logic
+   - **Events Module**: Kafka-based event-driven architecture for async processing
+   - **Stocks Module**: Stock catalog and metadata
 
-3. **Order Splitting Logic**: Implemented proportional allocation where each stock gets `(totalAmount × percentage) / 100`, then divided by price to get shares. Used the Decimal.js library to handle precise decimal arithmetic.
+3. **Multi-Tenant Account System**: Migrated from global ENV-based balance to per-account system:
+   - Each account has its own balance, holdings, and totalInvested tracking
+   - Full CRUD operations via REST API (create account, deposit, withdraw, get balance)
+   - Account isolation ensures proper multi-tenant support
+   - All in-memory (no database dependency)
 
-4. **Market Hours Validation**: Added execution date calculation based on US market hours (9:30 AM - 4:00 PM EST), weekends, and scheduling logic for after-hours orders.
+4. **Event-Driven Architecture with Kafka**: Implemented async event processing for scalability:
+   - **Event Types**: `order.created`, `order.executed`, `balance.updated`, `holdings.updated`
+   - **Producer**: EventsService emits events to Kafka topics
+   - **Consumer**: Separate microservice processes events for notifications, analytics, webhooks
+   - **Benefits**: Decoupled services, horizontal scalability, audit trail, async processing
 
-5. **Testing Strategy**: Wrote comprehensive unit tests (37 tests total) covering:
+5. **Order Execution System**: Automated order execution with cron jobs:
+   - Cron job runs every minute during market hours (9:30 AM - 4:00 PM EST)
+   - Automatically executes pending/scheduled/queued orders
+   - Manual execution endpoints for specific orders or dates
+   - Order status tracking: PENDING → SCHEDULED → QUEUED → EXECUTED/FAILED
+   - Execution events emitted to Kafka for downstream processing
+
+6. **Order Splitting Logic**: Implemented proportional allocation where each stock gets `(totalAmount × percentage) / 100`, then divided by price to get shares. Used the Decimal.js library to handle precise decimal arithmetic.
+
+7. **Market Hours Validation**: Added execution date calculation based on US market hours (9:30 AM - 4:00 PM EST), weekends, and scheduling logic for after-hours orders.
+
+8. **Testing Strategy**: Wrote comprehensive unit tests (39 tests total) covering:
    - Edge cases like insufficient balance, invalid percentages
    - SELL operations with insufficient holdings validation
    - Idempotency scenarios (duplicate requests, payload conflicts)
@@ -54,6 +74,8 @@ My approach focused on building a robust order splitting system with proper vali
 - Holdings are tracked in-memory and updated with each BUY/SELL transaction
 - Total invested is calculated by summing all BUY orders minus SELL orders
 - Platform balance cannot go negative (enforced validation on BUY orders and withdrawals)
+- **Each order item's `amount` field represents the actual cost (shares × price), not the allocated percentage amount**
+- Due to share rounding, the actual total charged may differ slightly from the requested amount (typically by cents)
 
 ---
 
@@ -90,6 +112,23 @@ Solution: Used `date-fns-tz` to convert current time to `America/New_York` timez
 Percentages must sum to exactly 100%, but floating-point arithmetic can cause issues (e.g., `60.5 + 39.5` might not equal exactly 100 due to representation).
 
 Solution: Used Decimal.js for summing percentages and allowed a 0.01% tolerance when checking if the sum equals 100.
+
+**Challenge 6: Amount Precision - Actual vs Allocated Amounts**
+
+Initial implementation stored the allocated amount (percentage × total) for each order item, but this created a critical financial discrepancy: the stored `amount` didn't equal `shares × price` due to share rounding.
+
+Example of the problem:
+- Request: $100,000 split 60/40 at $100.01 per share
+- Stock 1: Allocated $60,000 → 599.94 shares (rounded) → **actual cost $59,994.00**
+- Stored amount was $60,000, but actual value of shares was $59,994.00 ❌
+
+Solution: Changed `amount` to represent the **actual cost** (shares × price) instead of the allocated amount:
+1. Calculate shares from allocated amount: `shares = (amount × percentage ÷ 100) ÷ price`
+2. Round shares to configured decimals (default: 3)
+3. **Calculate actual amount: `amount = roundedShares × price`**
+4. Use sum of actual amounts for `totalAmount` and balance deduction
+
+This ensures perfect financial accuracy where `amount === shares × price` for every order item, preventing accounting discrepancies.
 
 ---
 

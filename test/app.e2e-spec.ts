@@ -58,13 +58,22 @@ describe('Robo-Advisor API (e2e)', () => {
   describe('Orders', () => {
     let stockId: string;
     let orderId: string;
+    let accountId: string;
 
     beforeAll(async () => {
-      // Get a stock ID for testing
       const stocksResponse = await request(app.getHttpServer())
         .get('/stocks')
         .expect(200);
       stockId = stocksResponse.body[0].id;
+
+      const accountResponse = await request(app.getHttpServer())
+        .post('/accounts')
+        .send({
+          name: 'Test Account',
+          initialBalance: 10000,
+        })
+        .expect(201);
+      accountId = accountResponse.body.id;
     });
 
     describe('/orders (GET)', () => {
@@ -83,6 +92,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [
@@ -109,6 +119,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: -50,
             orderType: 'BUY',
             portfolio: [
@@ -125,6 +136,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'INVALID',
             portfolio: [
@@ -141,6 +153,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [
@@ -157,6 +170,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [
@@ -183,6 +197,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [],
@@ -197,6 +212,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [
@@ -214,6 +230,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 0,
             orderType: 'BUY',
             portfolio: [
@@ -230,6 +247,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 100,
             orderType: 'BUY',
             portfolio: [
@@ -256,6 +274,7 @@ describe('Robo-Advisor API (e2e)', () => {
         return request(app.getHttpServer())
           .post('/orders')
           .send({
+            accountId: accountId,
             amount: 1000.33,
             orderType: 'BUY',
             portfolio: [
